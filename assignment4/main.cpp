@@ -249,6 +249,12 @@ void test_nonlinear_material() {
     // Newton's method
     // set max number of iterations of Newton's method to 1000
     int max_iters = 1000;
+    std::vector<int> index_mapping(dim);
+    int dofs = 0;
+    for (size_t i = 0;i < dim;i++)
+        if (index_mask[i])
+            index_mapping[i] = dofs ++;
+
     for (int iter = 0;iter < max_iters;iter ++) {
         
         Eigen::ConjugateGradient<Eigen::SparseMatrix<double>, Eigen::Upper> solver;
@@ -257,14 +263,54 @@ void test_nonlinear_material() {
         /* Implement your code here */
 
         // Step 1: linearize the function around current solution vertices to get K and fe
+        get_K_and_fe(tet_mesh, tet_def_body, tet_mesh.vertex(), index_mask, K, fe);
 
         // Step 2: solve K*u = fe + f_ext
+        Eigen::VectorXd u = solver.compute(K).solve(fe + f_ext);
 
         // Step 3: line search for step size, so that |fe(vertices + u * step) + f_ext| < |fe(vertices) + f_ext|
+        // 1-10, pick as large, and
+        double step = 100;
 
-        // Step 4: update vertices = vertices + u * step
+        Eigen::VectorXd feu;
+
+        for(int si = 0; si < 1; ++si)
+        {
+            Eigen::SparseMatrix<double> nK;
+            Eigen::VectorXd nfe;
+            step /= 2;
+
+            // Step 4: update vertices = vertices + u * step
+            int cnt = 0;
+            for (size_t i = 0;i < num_vertices; i++){
+                for (size_t j = 0;j < 3;j++) {
+                    if (index_mask[i * 3 + j]) {
+                        vertices(j, i) += u(cnt++) * step;
+                    }
+                }
+            }
+
+            auto prevv= tet_mesh.vertex();
+            auto afterv = vertices;
+
+            // To-Do: Update Tetrahedral Mesh with New Vertices, otherwise will not converge.
+            materials::TetrahedralMesh<double> ntet_mesh(vertices, tet_mesh.element());
+            materials::TetDeformableBody<double> ntet_def_body(nonlinear_elasticity_material, vertices, 0.4, ntet_mesh);
+
+            // Use the morphed tet mesh to compute the new force.
+            get_K_and_fe(ntet_mesh, ntet_def_body, vertices, index_mask,  nK, nfe);
+            auto prev = (fe + f_ext).norm();
+            auto result = (nfe + f_ext).norm();
+
+            if((nfe + f_ext).norm() < (fe + f_ext).norm())
+            {
+                feu = nfe;
+                break;
+            }
+        }
 
         // Step 5: terminate Newton's method if |fe(vertices + u * step) + f_ext| < eps
+        if((feu + f_ext).norm() < 1e-6) break;
     }
 
     // validate results

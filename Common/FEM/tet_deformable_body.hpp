@@ -96,12 +96,50 @@ namespace materials {
             triplet_list.clear();
             const int vertex_num = static_cast<int>(vertices.cols());
             const int tet_num = this->undeformed_mesh_.NumOfElement();
+
             // compute Ki for each tet element and fill the triplet_list vector
             for (int i = 0;i < tet_num;i++) {
                 const Eigen::VectorXi elements = this->undeformed_mesh_.element(i);             // get the element of the tet
                 const Material<3, T>& material = this->materials_[this->material_id_[i]].get(); // get the material model
 
                 /* Implement your code here */
+                //Assemble Ds using the input vertices
+                Eigen::Matrix<T,3,3> Ds;
+                for(int j = 0; j <3; j ++)
+                    Ds.col(j) = vertices.col(elements[j]) - vertices.col(elements[3]);
+
+                const Eigen::Matrix<T, 3, 3> F = Ds * Dm_inv[i];;
+                //std::cout<<F;
+
+                //Obtain F according to the cheatsheet 4.3.1
+                const Eigen::Matrix<T, 9, 12> dFdxi = dFdx[i];
+
+                //Obtain ∂P(F)/∂F using the part 1 code
+                const Eigen::Matrix<T, 9, 9> dPdF = material.StressDifferential(F);
+
+                //Obtain ∂P(F)∂x=∂P(F)∂F∂F∂x, where x∈R3×4 is the matrix that holds the position of the 4 deformed vertices in the tet.
+                //dPdF should be a 9*9 matrix, dFdx should be a 9*12 matrix, and their product is a 9*12 matrix.
+                const Eigen::Matrix<T, 9, 12> dPdx = dPdF * dFdxi;
+                const Eigen::Matrix<T, 12,12> Ki = dPdx.transpose()*dFdxi;
+
+                //Following section 6 in the cheatsheet to obtain ∂f∂x (the stiffness matrix of the current tet),
+                //where f∈R3×4 is the matrix that holds the force at the 4 deformed vertices in the tet.
+                // The resulting matrix is 12×12. Don't forget to multiply the volume of the tet.
+                // Perform a tensor contraction operator for dPdx and dFdx
+                for(int r = 0; r < 4; ++r)
+                    for(int k = 0; k < 4; ++k){
+                        const int vertexIdx1 = elements[r];
+                        const int vertexIdx2 = elements[k];
+
+                        for(int j = 0; j < 3; ++j)
+                            for(int l = 0; l < 3; ++l)
+                            {
+                                T value = Ki(r*3+j, k*3+l) * tet_volume[i];
+                                triplet_list.push_back(Trip<T>(3*vertexIdx1+j, 3*vertexIdx2 +l, value));
+                            }
+                    }
+
+                //Put the elementary stiffness matrix to the right locations in the global stiffness matrix.
                 
             }
             Eigen::SparseMatrix<T> K(vertex_num * 3, vertex_num * 3);

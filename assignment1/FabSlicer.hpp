@@ -4,6 +4,9 @@
 #include "IntervalTree.hpp"
 #include "GCodeConverter.hpp"
 #include <chrono>
+#include <unordered_map>
+#include <memory>
+#include <iostream>
 
 namespace fab_translation {
     template <typename T>
@@ -19,6 +22,15 @@ namespace fab_translation {
             : _p0(p0), _p1(p1) {}
         Vector3<T> p0() { return _p0; }
         Vector3<T> p1() { return _p1; }
+
+        std::pair<int, int> VertexPair;
+        std::pair<int, int> startCase;
+        std::pair<int, int> endCase;
+
+        int startIdx;
+        int endIdx;
+
+
 
     private:
         Vector3<T> _p0, _p1;
@@ -162,7 +174,59 @@ namespace fab_translation {
         //      - collect all intersection edges and return
         void Slicing_bruteforce(mesh::TriMesh<T>& tri_mesh, 
             std::vector<std::vector<IntersectionEdge<T>>> &intersection_edges) {
-            
+
+            intersection_edges.clear();
+
+            std::vector<Eigen::Vector3i>& TriIndex = tri_mesh.elements();
+            std::vector<Eigen::Vector3i>& edgesIndexMapping = tri_mesh.edges();
+
+            std::cout<<"brute force";
+            Vector3<T> n = Vector3<T>(0,0,1);
+
+            for(T z = _bottom; z < _top; z += _dz)
+            {
+                std::vector<IntersectionEdge<T>> EdgesAtZ;
+
+                Vector3<T> pt= Vector3<T>(0,0,z);
+
+                geometry::Plane<T> p(pt,n);
+
+                for(int i = 0; i < TriIndex.size();i++)
+                {
+                    Eigen::Vector3i index = TriIndex[i];
+                    Vector3<T> v0 = tri_mesh.vertices(index[0]);
+                    Vector3<T> v1 = tri_mesh.vertices(index[1]);
+                    Vector3<T> v2 = tri_mesh.vertices(index[2]);
+
+                    geometry::Triangle<T> tri(v0, v1, v2);
+
+                    std::vector<std::pair<int, Vector3<T>>> result = tri.IntersectPlane(p);
+
+                    std::pair<int, Vector3<T>> pt1 = result[0];
+                    int idx1 = std::get<0>(pt1);
+
+                    std::pair<int, Vector3<T>> pt2 = result[1];
+                    int idx2 = std::get<0>(pt2);
+
+                    if(idx1 == -1)
+                    {continue;}
+
+                    IntersectionEdge<T> edge = IntersectionEdge<T>(std::get<1>(pt1), std::get<1>(pt2));
+
+                    // indexing edge start point and end point with unique edge index
+                    // from the tri_mesh object, to be used for accelerated stitching
+                    edge.VertexPair = std::pair<int, int>(idx1,idx2);
+
+                    // the hashing will be odd if intersecting at edge and even at vertex
+                    edge.startIdx = idx1 < 3 ? TriIndex[i][idx1] * 2 + 1: edgesIndexMapping[i][idx1 - 3] * 2;
+                    edge.endIdx = idx2 < 3 ? TriIndex[i][idx2] * 2 + 1 : edgesIndexMapping[i][idx2 - 3] * 2;
+
+                    // Get the Starting Point
+                    EdgesAtZ.push_back(edge);
+                }
+                if(EdgesAtZ.size() == 0) continue;
+                intersection_edges.push_back(EdgesAtZ);
+            }
         }
 
         // TODO: HW1
@@ -176,8 +240,89 @@ namespace fab_translation {
         //      - for each plane, avoid enumerating all triangles to intersect (by interval tree, or other methods)
         void Slicing_accelerated(mesh::TriMesh<T>& tri_mesh,
             std::vector<std::vector<IntersectionEdge<T>>> &intersection_edges) {
+            intersection_edges.clear();
 
+            std::vector<Eigen::Vector3i>& TriIndex = tri_mesh.elements();
+            std::vector<Eigen::Vector3i>& edgesIndexMapping = tri_mesh.edges();
+
+            Vector3<T> n = Vector3<T>(0,0,1);
+
+            std::vector<data_structure::IntervalEntry<T>> AllIntervals;
+            AllIntervals.clear();
+
+            for(int i = 0; i < TriIndex.size();i++) {
+                Eigen::Vector3i index = TriIndex[i];
+                Vector3<T> v0 = tri_mesh.vertices(index[0]);
+                Vector3<T> v1 = tri_mesh.vertices(index[1]);
+                Vector3<T> v2 = tri_mesh.vertices(index[2]);
+
+                T zmin = std::min(std::min(v0[2], v1[2]), v2[2]);
+                T zmax = std::max(std::max(v0[2], v1[2]), v2[2]);
+
+                data_structure::IntervalEntry<T> I = data_structure::IntervalEntry<T>(zmin, zmax, i);
+                AllIntervals.push_back(I);
+            }
+
+            data_structure::IntervalTree<T> tree;
+
+            tree.build(AllIntervals);
+
+            for(T z = _bottom; z < _top; z += _dz)
+            {
+                std::vector<IntersectionEdge<T>> EdgesAtZ;
+                Vector3<T> pt= Vector3<T>(0,0,z);
+
+                geometry::Plane<T> p(pt,n);
+
+                std::vector<IntersectionEdge<T>> results;
+
+                //tree.query(z, results);
+
+                for(int i = 0; i < results.size();i++)
+                {
+                    Eigen::Vector3i index = TriIndex[i];
+                    Vector3<T> v0 = tri_mesh.vertices(index[0]);
+                    Vector3<T> v1 = tri_mesh.vertices(index[1]);
+                    Vector3<T> v2 = tri_mesh.vertices(index[2]);
+
+                    geometry::Triangle<T> tri(v0, v1, v2);
+
+                    std::vector<std::pair<int, Vector3<T>>> result = tri.IntersectPlane(p);
+
+                    std::pair<int, Vector3<T>> pt1 = result[0];
+                    int idx1 = std::get<0>(pt1);
+
+                    std::pair<int, Vector3<T>> pt2 = result[1];
+                    int idx2 = std::get<0>(pt2);
+
+                    if(idx1 == -1)
+                    {continue;}
+
+                    IntersectionEdge<T> edge = IntersectionEdge<T>(std::get<1>(pt1), std::get<1>(pt2));
+
+                    // indexing edge start point and end point with unique edge index
+                    // from the tri_mesh object, to be used for accelerated stitching
+                    edge.VertexPair = std::pair<int, int>(idx1,idx2);
+
+                    // the hashing will be odd if intersecting at edge and even at vertex
+                    edge.startIdx = idx1 < 3 ? TriIndex[i][idx1] * 2 + 1: edgesIndexMapping[i][idx1 - 3] * 2;
+                    edge.endIdx = idx2 < 3 ? TriIndex[i][idx2] * 2 + 1 : edgesIndexMapping[i][idx2 - 3] * 2;
+
+                    // Get the Starting Point
+                    EdgesAtZ.push_back(edge);
+                }
+                if(EdgesAtZ.size() == 0) continue;
+                intersection_edges.push_back(EdgesAtZ);
+            }
         }
+
+        // Hash Function for two vectors
+        class HashVec3{
+        public:
+            size_t operator()(const std::vector<T> &k) const{
+                return k[0] * 10000 + k[1]*100 + k[2];
+            }
+        };
 
         // TODO: HW1
         // part 2.3, 3.2
@@ -196,6 +341,98 @@ namespace fab_translation {
             std::vector<std::vector<IntersectionEdge<T>>> &intersection_edges,
             std::vector<std::vector<std::vector<Vector3<T>>>>& contours) {
 
+            // Initialize contours array
+            contours.clear();
+
+            for(int i = 0; i < intersection_edges.size(); ++i)
+            {
+
+                // Since c++ unordered_map cannot hash vector3 directly
+                // We first create a unique id for each vertex in the edge soup
+                //std::Vector3<T>
+
+                std::unordered_map<int, std::vector<int>> H;
+                std::unordered_map<int, Vector3<T>> edgeMap;
+
+                std::vector<IntersectionEdge<T>> edgeAtZ = intersection_edges[i];
+
+                // This is a directly accelerated version using Hashing and Adjacency List
+                // We first construct a Hash Table H, to store the adjacent points of each of the vertex
+                // Time complexity O(n), where n is the number of intersection edge soup
+                for(int j = 0; j < edgeAtZ.size(); ++j)
+                {
+                    IntersectionEdge<T> edge = edgeAtZ[j];
+
+                    Vector3<T> startPt = edge.p0();
+                    Vector3<T> endPt = edge.p1();
+
+                    int p0 = edge.startIdx;
+                    int p1 = edge.endIdx;
+
+                    H[p0].push_back(p1);
+                    H[p1].push_back(p0);
+
+                    edgeMap[p0] = startPt;
+                    edgeMap[p1] = endPt;
+                }
+
+                // Checking if any isolated geometry exists and remove, O(n)
+                auto itcleaner = H.begin();
+                while(itcleaner != H.end())
+                {
+                    if(itcleaner->second.size() < 2)
+                    {
+                        itcleaner = H.erase(itcleaner);
+                    } else ++itcleaner;
+                }
+
+                // Pick an arbitrary starting point for the contour creation
+                // Loop through the Hash Table until it is empty
+                auto it = H.begin();
+                std::vector<std::vector<Vector3<T>>> contourI;
+                contourI.clear();
+
+                while(!H.empty())
+                {
+                    std::vector<Vector3<T>> contourIatJ;
+                    contourIatJ.clear();
+
+                    int p0 = it -> first;
+                    std::vector<int> firstgroup = it -> second;
+
+                    int p1 = firstgroup[0];
+                    int last = firstgroup[1];
+
+                    contourIatJ.push_back(edgeMap[p0]);
+                    contourIatJ.push_back(edgeMap[p1]);
+
+                    H.erase(p0);
+
+                    // and recursively remove pairs of points and add them to the contour
+                    // For a valid two-manifold mesh, each point must have two adjacent points.
+                    // For isolated edges, we can just loop through H and delete them
+                    while(p1 != last)
+                    {
+                        if(H.empty()) break;
+                        std::vector<int> currentGroup = H[p1];
+
+                        int u = currentGroup[0];
+                        int v = currentGroup[1];
+
+                        if(u == p0) p0 = p1, p1 = v;
+                        else p0 = p1, p1 = u;
+
+                        contourIatJ.push_back(edgeMap[p1]);
+                        H.erase(p0);
+                    }
+
+                    H.erase(last);
+
+                    contourI.push_back(contourIatJ);
+                }
+
+                contours.push_back(contourI);
+            }
         }
 
         // TODO: HW1 (Optional)

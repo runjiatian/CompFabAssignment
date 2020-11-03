@@ -56,10 +56,23 @@ namespace materials {
         const typename Material<dim, T>::MatrixDim2T StressDifferential(
                 const typename Material<dim, T>::MatrixDimT& F) const {
 
+            // Compute Matrix E According to the implementation of Eftychios and Jernej's
+            const typename Material<dim, T>::MatrixDim2T I = Material<dim, T>::MatrixDim2T::Identity();
+            //Eigen::Matrix<T, dim, dim> E = (F.transpose()*F - I)/2;
             const T mu = Material<dim, T>::mu();
             const T lambda = Material<dim, T>::lambda();
             typename Material<dim, T>::MatrixDim2T K;
+
             /* Implement your code here */
+            K << 2*mu+lambda, 0,    0,     0,   lambda,  0,     0,     0,  lambda,
+                     0,      mu,    0,    mu,     0,     0,     0,     0,     0,
+                     0,      0,    mu,     0,     0,     0,     mu,    0,     0,
+                     0,      mu,    0,    mu,     0,     0,     0,     0,     0,
+                    lambda,  0,     0,     0,2*mu+lambda,0,     0,     0,  lambda,
+                     0,      0,     0,     0,     0,     mu,    0,     mu,    0,
+                     0,      0,    mu,     0,     0,     0,     mu,    0,     0,
+                     0,      0,     0,     0,     0,     mu,     0,    mu,    0,
+                    lambda,  0,     0,     0,  lambda,   0,      0,    0, 2*mu+lambda;
             
             return K;
 
@@ -68,9 +81,6 @@ namespace materials {
     private:
         LinearElasticityMaterial<dim, T>& operator=(
                 const LinearElasticityMaterial<dim, T>&);
-
-
-
     };
 
 }

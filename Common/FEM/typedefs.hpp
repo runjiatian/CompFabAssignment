@@ -17,4 +17,8 @@ namespace materials{
 
     template <typename T>
     using MatrixX = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+
+    template <typename T>
+    using Trip = Eigen::Triplet<T>;
+
 }

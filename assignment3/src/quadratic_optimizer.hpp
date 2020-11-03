@@ -68,7 +68,7 @@ bool quadratic_optimization(
 			std::cerr << "active_set error." << std::endl;
 			error = true;
 		}
-		W.col(i) = Wi;
+		//W.col(i) = Wi;
 	};
 	igl::parallel_for(m, optimize_weight, 3);
 
